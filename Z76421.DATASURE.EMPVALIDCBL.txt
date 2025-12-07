@@ -1,0 +1,92 @@
+       IDENTIFICATION DIVISION.
+       PROGRAM-ID. EMPVALID.
+
+       ENVIRONMENT DIVISION.
+       INPUT-OUTPUT SECTION.
+       FILE-CONTROL.
+           SELECT INFILE ASSIGN TO 'INPUTDD'
+               ORGANIZATION IS SEQUENTIAL
+               FILE STATUS IS IN-STAT.
+           SELECT OUTFILE ASSIGN TO 'OUTPUTDD'
+               ORGANIZATION IS SEQUENTIAL
+               FILE STATUS IS OUT-STAT.
+
+       DATA DIVISION.
+       FILE SECTION.
+
+       FD  INFILE.
+       01  IN-REC.
+           05 EMP-ID         PIC X(5).
+           05 FILLER         PIC X(2).
+           05 EMP-NAME       PIC X(11).
+           05 FILLER         PIC X(3).
+           05 EMP-SAL        PIC X(6).
+
+       FD  OUTFILE.
+       01  OUT-REC           PIC X(30).
+
+       WORKING-STORAGE SECTION.
+       77  IN-STAT           PIC XX   VALUE SPACES.
+       77  OUT-STAT          PIC XX   VALUE SPACES.
+       77  EOF-FLAG          PIC X    VALUE 'N'.
+       77  VALID-COUNT       PIC 9(5) VALUE ZERO.
+       77  INVALID-COUNT     PIC 9(5) VALUE ZERO.
+
+       PROCEDURE DIVISION.
+
+       MAIN-PROCEDURE.
+           OPEN INPUT  INFILE
+                OUTPUT OUTFILE
+
+           PERFORM PROCESS-RECORDS
+           PERFORM WRITE-SUMMARY
+
+           CLOSE INFILE OUTFILE
+           STOP RUN.
+
+       PROCESS-RECORDS.
+           MOVE 'N' TO EOF-FLAG
+
+           PERFORM UNTIL EOF-FLAG = 'Y'
+               READ INFILE
+                   AT END
+                       MOVE 'Y' TO EOF-FLAG
+                   NOT AT END
+                       PERFORM HANDLE-ONE-RECORD
+               END-READ
+           END-PERFORM.
+
+       HANDLE-ONE-RECORD.
+           IF EMP-ID IS NUMERIC
+               ADD 1 TO VALID-COUNT
+               STRING
+                   'VALID:     ' DELIMITED BY SIZE
+                   EMP-ID      DELIMITED BY SIZE
+                   ' '         DELIMITED BY SIZE
+                   EMP-NAME    DELIMITED BY SIZE
+                   INTO OUT-REC
+               END-STRING
+           ELSE
+               ADD 1 TO INVALID-COUNT
+               STRING
+                   'INVALID ID: ' DELIMITED BY SIZE
+                   EMP-ID       DELIMITED BY SIZE
+                   ' '          DELIMITED BY SIZE
+                   EMP-NAME     DELIMITED BY SIZE
+                   INTO OUT-REC
+               END-STRING
+           END-IF
+           WRITE OUT-REC.
+
+       WRITE-SUMMARY.
+           STRING 'VALID COUNT:      ' DELIMITED BY SIZE
+                  VALID-COUNT        DELIMITED BY SIZE
+                  INTO OUT-REC
+           END-STRING
+           WRITE OUT-REC
+
+           STRING 'INVALID COUNT:    ' DELIMITED BY SIZE
+                  INVALID-COUNT      DELIMITED BY SIZE
+                  INTO OUT-REC
+           END-STRING
+           WRITE OUT-REC.

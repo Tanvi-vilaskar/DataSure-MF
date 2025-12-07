@@ -1,0 +1,169 @@
+/* REXX : VALRECOV - Fix INVALID IDs & remove duplicates */
+
+/*************************************************************
+* 1. READ PARAMETERS FROM TSO/JCL
+*************************************************************/
+PARSE ARG infile outfile auditfile
+
+/* Detect batch mode (IKJEFT01) */
+batchMode = (SYSENV = "BATCH")
+
+/*************************************************************
+* 2. HANDLE ARGUMENTS BASED ON ENVIRONMENT
+*************************************************************/
+
+/* --- Running under JCL --- */
+IF batchMode THEN DO
+  IF infile = '' | outfile = '' | auditfile = '' THEN DO
+    SAY 'ERROR: Missing parameters.'
+    SAY 'JCL must supply 3 parameters: INFILE OUTFILE AUDITFILE'
+    EXIT 12
+  END
+END
+
+/* --- Running under TSO interactive --- */
+ELSE DO
+  IF infile = '' THEN DO FOREVER
+    SAY 'Enter input dataset name:'
+    PULL infile
+    infile = STRIP(infile)
+    IF infile \= '' THEN LEAVE
+  END
+
+  IF outfile = '' THEN DO FOREVER
+    SAY 'Enter cleaned output dataset:'
+    PULL outfile
+    outfile = STRIP(outfile)
+    IF outfile \= '' THEN LEAVE
+  END
+
+  IF auditfile = '' THEN DO FOREVER
+    SAY 'Enter audit dataset for ID changes:'
+    PULL auditfile
+    auditfile = STRIP(auditfile)
+    IF auditfile \= '' THEN LEAVE
+  END
+END
+
+/*************************************************************
+* 3. ALLOCATE DATASETS
+*************************************************************/
+"ALLOC F(INFILE)  DA('"infile"') SHR"
+"ALLOC F(OUTFILE) DA('"outfile"') NEW SPACE(5,5) TRACKS RECFM(F,B) LRECL(27)"
+"ALLOC F(AUDIT)   DA('"auditfile"') NEW SPACE(5,5) TRACKS RECFM(F,B) LRECL(40)"
+
+/*************************************************************
+* 4. LOAD INPUT
+*************************************************************/
+"EXECIO * DISKR INFILE (STEM R. FINIS)"
+
+seenIDs.  = ''
+new.      = ''
+audit.    = ''
+n         = 0
+a         = 0
+valid_cnt = 0
+corr_cnt  = 0
+dup_cnt   = 0
+
+/*************************************************************
+* 5. MAIN PROCESSING
+*************************************************************/
+DO i = 1 TO R.0
+  rec = STRIP(R.i,'T')
+
+  /* Skip counts */
+  IF LEFT(rec,11) = 'VALID COUNT'   THEN ITERATE
+  IF LEFT(rec,13) = 'INVALID COUNT' THEN ITERATE
+  IF LEFT(rec,15) = 'DUPLICATE COUNT' THEN ITERATE
+
+  /***************************************************
+  * INVALID ID
+  ***************************************************/
+  IF LEFT(rec,10) = 'INVALID ID' THEN DO
+    oldID = SUBSTR(rec,13,5)
+
+    /* Already corrected before? */
+    IF seenIDs.oldID = 1 THEN DO
+      dup_cnt = dup_cnt + 1
+      ITERATE
+    END
+
+    SAY 'Invalid ID found:' rec
+
+    /* JCL cannot prompt */
+    IF batchMode THEN DO
+      SAY 'ERROR: INVALID ID found but JCL cannot prompt.'
+      EXIT 16
+    END
+
+    /* Ask user once per invalid ID */
+    DO FOREVER
+      SAY 'Enter new 5-digit Employee ID (OLD ID=' oldID'):'
+      PULL newID
+      newID = STRIP(newID)
+
+      IF LENGTH(newID) = 5 & DATATYPE(newID,'W') & seenIDs.newID = '' THEN LEAVE
+
+      SAY '-> Must be 5 digits, numeric and unique. Try again.'
+    END
+
+    corr_cnt = corr_cnt + 1
+    seenIDs.oldID = 1
+    seenIDs.newID = 1
+
+    /* Write to audit */
+    a = a + 1
+    audit.a = oldID ' ' newID
+
+    /* Fix record */
+    rec = 'VALID:     ' || newID || SUBSTR(rec,18)
+
+    /* Save to output */
+    n = n + 1
+    new.n = rec
+    valid_cnt = valid_cnt + 1
+    ITERATE
+  END
+
+  /***************************************************
+  * DUPLICATE
+  ***************************************************/
+  IF LEFT(rec,9) = 'DUPLICATE' THEN DO
+    dup_cnt = dup_cnt + 1
+    ITERATE
+  END
+
+  /***************************************************
+  * VALID RECORD
+  ***************************************************/
+  IF LEFT(rec,6) = 'VALID:' THEN DO
+    id = SUBSTR(rec,12,5)
+
+    IF seenIDs.id = '' THEN DO
+      seenIDs.id = 1
+      n = n + 1
+      new.n = rec
+      valid_cnt = valid_cnt + 1
+    END
+    ELSE dup_cnt = dup_cnt + 1
+  END
+END
+
+/*************************************************************
+* 6. WRITE OUTPUT
+*************************************************************/
+IF n > 0 THEN "EXECIO " n " DISKW OUTFILE (STEM new. FINIS)"
+IF a > 0 THEN "EXECIO " a " DISKW AUDIT  (STEM audit. FINIS)"
+
+/*************************************************************
+* 7. SUMMARY
+*************************************************************/
+SAY '------------------------------------------'
+SAY 'DataSure MF Dashboard - Processing Report'
+SAY 'Total valid records kept:       ' valid_cnt
+SAY 'Total invalid IDs corrected:    ' corr_cnt
+SAY 'Total duplicate records removed:' dup_cnt
+SAY '------------------------------------------'
+
+EXIT 0
